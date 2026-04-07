@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "http://localhost:8080/api",
+  baseURL: import.meta.env.VITE_API_URL, // ✅ dynamic backend URL
   timeout: 15000,
 });
 
@@ -45,18 +45,27 @@ API.interceptors.response.use(
       }
     }
 
-    // Normalize error message for consumers
     const serverMessage =
       error?.response?.data?.message ||
       error?.response?.data?.error ||
-      (typeof error?.response?.data === "string" ? error.response.data : null);
+      (typeof error?.response?.data === "string"
+        ? error.response.data
+        : null);
 
     const normalizedMessage =
       serverMessage ||
-      (status === 403 ? "You do not have permission to perform this action." : null) ||
-      (status === 404 ? "The requested resource was not found." : null) ||
-      (status >= 500 ? "Server error. Please try again later." : null) ||
-      (!error.response ? "Network error. Check your connection or backend server." : null) ||
+      (status === 403
+        ? "You do not have permission to perform this action."
+        : null) ||
+      (status === 404
+        ? "The requested resource was not found."
+        : null) ||
+      (status >= 500
+        ? "Server error. Please try again later."
+        : null) ||
+      (!error.response
+        ? "Network error. Check your connection or backend server."
+        : null) ||
       "Something went wrong. Please try again.";
 
     error.displayMessage = normalizedMessage;
@@ -65,7 +74,9 @@ API.interceptors.response.use(
 );
 
 // ── Helper: extract display message from caught error ────────────────────
-export const getApiError = (err, fallback = "An error occurred. Please try again.") =>
-  err?.displayMessage || fallback;
+export const getApiError = (
+  err,
+  fallback = "An error occurred. Please try again."
+) => err?.displayMessage || fallback;
 
 export default API;
