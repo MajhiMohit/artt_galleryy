@@ -1,9 +1,10 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: import.meta.env.VITE_API_URL, // ✅ dynamic backend URL
+  baseURL: import.meta.env.VITE_API_URL || "https://arttgallerybackend-production.up.railway.app/api",
   timeout: 15000,
 });
+
 
 // ── Request Interceptor: attach JWT token ─────────────────────────────────
 API.interceptors.request.use(
