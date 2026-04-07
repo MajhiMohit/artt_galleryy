@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "https://arttgallerybackend-production.up.railway.app/api",
+  baseURL: import.meta.env.VITE_API_URL || "https://arttgalleryybackend-production.up.railway.app/api",
   timeout: 15000,
 });
 
