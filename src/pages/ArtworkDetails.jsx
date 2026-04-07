@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
     ArrowLeft, Heart, ShoppingCart, Star, Eye, MapPin,
@@ -8,6 +8,52 @@ import {
 import { ARTWORKS, REVIEWS } from "../data/mockData";
 import { useAuth } from "../context/AuthContext";
 import ArtworkCard from "../components/ArtworkCard";
+import API from "../services/api";
+
+const FALLBACK_IMAGE = "/artworks/art_mind_mosaic.png";
+
+const normalizeArtwork = (artwork) => {
+    const directImage = artwork?.image;
+    const rawImage =
+        (typeof directImage === "string" ? directImage : "") ||
+        artwork?.imageUrl ||
+        artwork?.image_url ||
+        artwork?.thumbnail ||
+        artwork?.thumbnailUrl ||
+        artwork?.secureUrl ||
+        artwork?.secure_url ||
+        artwork?.cloudinaryUrl ||
+        artwork?.cloudinary?.url ||
+        artwork?.cloudinary?.secure_url ||
+        artwork?.image?.url ||
+        artwork?.image?.secure_url ||
+        artwork?.image?.secureUrl ||
+        "";
+
+    let normalizedImage = FALLBACK_IMAGE;
+
+    if (rawImage) {
+        if (/^(https?:|data:|blob:)/i.test(rawImage) || rawImage.startsWith("/")) {
+            normalizedImage = rawImage;
+        } else if (rawImage.startsWith("artworks/")) {
+            normalizedImage = `/${rawImage}`;
+        } else {
+            normalizedImage = `/artworks/${rawImage}`;
+        }
+    }
+
+    return {
+        ...artwork,
+        id: artwork?.id ?? artwork?._id ?? artwork?.artworkId,
+        image: normalizedImage,
+        artist: artwork?.artist || artwork?.artistName || "Unknown Artist",
+        tags: Array.isArray(artwork?.tags) ? artwork.tags : [],
+        views: Number(artwork?.views ?? 0),
+        rating: Number(artwork?.rating ?? 0),
+        reviews: Number(artwork?.reviews ?? 0),
+        price: Number(artwork?.price ?? 0),
+    };
+};
 
 const StarRow = ({ rating, onChange }) =>
     [1, 2, 3, 4, 5].map((s) => (
@@ -24,11 +70,20 @@ const StarRow = ({ rating, onChange }) =>
 const ArtworkDetails = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { isAuthenticated, user, toggleWishlist, isWishlisted, addPurchase } = useAuth();
 
-    const artwork = ARTWORKS.find((a) => a.id === Number(id));
-    const artworkReviews = REVIEWS.filter((r) => r.artworkId === Number(id));
-    const related = ARTWORKS.filter((a) => a.category === artwork?.category && a.id !== artwork?.id).slice(0, 3);
+    const [allArtworks, setAllArtworks] = useState(ARTWORKS.map(normalizeArtwork));
+
+    const routeArtwork = location.state?.artwork ? normalizeArtwork(location.state.artwork) : null;
+    const artwork =
+        (routeArtwork && String(routeArtwork.id) === String(id) ? routeArtwork : null) ||
+        allArtworks.find((a) => String(a.id) === String(id));
+
+    const artworkReviews = REVIEWS.filter((r) => String(r.artworkId) === String(id));
+    const related = allArtworks
+        .filter((a) => a.category === artwork?.category && String(a.id) !== String(artwork?.id))
+        .slice(0, 3);
 
     const [purchased, setPurchased] = useState(false);
     const [purchaseModal, setPurchaseModal] = useState(false);
@@ -37,6 +92,46 @@ const ArtworkDetails = () => {
     const [localReviews, setLocalReviews] = useState(artworkReviews);
     const [activeTab, setActiveTab] = useState("details");
     const [shared, setShared] = useState(false);
+
+    useEffect(() => {
+        setPurchased(false);
+        setPurchaseModal(false);
+        setReviewText("");
+        setReviewRating(5);
+        setLocalReviews(REVIEWS.filter((r) => String(r.artworkId) === String(id)));
+        setActiveTab("details");
+        setShared(false);
+    }, [id]);
+
+    useEffect(() => {
+        // First try fetching the specific artwork by ID for efficiency
+        API.get(`/artworks/${id}`)
+            .then((res) => {
+                if (res.data) {
+                    const normalized = normalizeArtwork(res.data);
+                    setAllArtworks((prev) => {
+                        const exists = prev.find((a) => String(a.id) === String(normalized.id));
+                        return exists ? prev.map((a) => String(a.id) === String(normalized.id) ? normalized : a) : [normalized, ...prev];
+                    });
+                }
+            })
+            .catch(() => {
+                // Fallback: fetch all artworks
+                API.get("/artworks")
+                    .then((res) => {
+                        const apiArtworks = Array.isArray(res.data)
+                            ? res.data
+                            : Array.isArray(res.data?.data)
+                            ? res.data.data
+                            : [];
+                        const source = apiArtworks.length > 0 ? apiArtworks : ARTWORKS;
+                        setAllArtworks(source.map(normalizeArtwork));
+                    })
+                    .catch(() => {
+                        setAllArtworks(ARTWORKS.map(normalizeArtwork));
+                    });
+            });
+    }, [id]);
 
     if (!artwork) {
         return (
@@ -103,13 +198,21 @@ const ArtworkDetails = () => {
                 <div className="artwork-detail-grid">
                     {/* Left — Image */}
                     <motion.div
+                        key={`image-${artwork.id}`}
                         className="artwork-detail-image-col"
                         initial={{ opacity: 0, scale: 0.97 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ duration: 0.6 }}
                     >
                         <div className="artwork-detail-image-wrapper">
-                            <img src={artwork.image} alt={artwork.title} className="artwork-detail-image" />
+                            <img 
+                                src={artwork.image} 
+                                alt={artwork.title} 
+                                className="artwork-detail-image"
+                                onError={(e) => {
+                                    e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23ccc' width='400' height='400'/%3E%3Ctext x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='16' fill='%23999'%3EImage not found%3C/text%3E%3C/svg%3E";
+                                }}
+                            />
                             <div className="artwork-detail-badges">
                                 {artwork.featured && <span className="badge badge-gold">Featured</span>}
                                 {artwork.sold && <span className="badge badge-red">Sold</span>}
@@ -130,6 +233,7 @@ const ArtworkDetails = () => {
 
                     {/* Right — Info */}
                     <motion.div
+                        key={`info-${artwork.id}`}
                         className="artwork-detail-info"
                         initial={{ opacity: 0, y: 30 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -197,7 +301,7 @@ const ArtworkDetails = () => {
 
                         {/* Tab Content */}
                         <motion.div
-                            key={activeTab}
+                            key={`tab-${activeTab}-${artwork.id}`}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3 }}
@@ -308,7 +412,14 @@ const ArtworkDetails = () => {
                             <h3 className="font-display mb-2">Confirm Purchase</h3>
                             <div className="gold-divider gold-divider-left mb-3" />
                             <div className="modal-artwork-preview">
-                                <img src={artwork.image} alt={artwork.title} />
+                                <img 
+                                    key={`modal-img-${artwork.id}`}
+                                    src={artwork.image} 
+                                    alt={artwork.title}
+                                    onError={(e) => {
+                                        e.currentTarget.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23ccc' width='400' height='400'/%3E%3Ctext x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='16' fill='%23999'%3EImage not found%3C/text%3E%3C/svg%3E";
+                                    }}
+                                />
                                 <div>
                                     <p style={{ fontWeight: 600 }}>{artwork.title}</p>
                                     <p className="text-sm text-muted">by {artwork.artist}</p>

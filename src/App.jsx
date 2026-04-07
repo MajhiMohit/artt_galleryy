@@ -27,18 +27,19 @@ import VirtualTour from "./pages/VirtualTour";
 import Wishlist from "./pages/Wishlist";
 import Purchases from "./pages/Purchases";
 import Exhibitions from "./pages/Exhibitions";
+import AddArtwork from "./pages/AddArtwork";
+import EditArtwork from "./pages/EditArtwork"; // ✅ added
 
-// Scroll to top on route change
+// Scroll to top
 const ScrollToTop = () => {
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 };
 
-// Pages that should not show the footer
+// Footer hidden paths
 const NO_FOOTER_PATHS = ["/admin", "/artist", "/curator", "/visitor", "/virtual-tour"];
 
-// Inner App wrapped in Router context
 const AppInner = () => {
   const { pathname } = useLocation();
   const showFooter = !NO_FOOTER_PATHS.some((p) => pathname.startsWith(p));
@@ -48,7 +49,8 @@ const AppInner = () => {
       <ScrollToTop />
       <AnimatePresence mode="wait">
         <Routes>
-          {/* Public */}
+
+          {/* PUBLIC ROUTES */}
           <Route path="/" element={<Home />} />
           <Route path="/gallery" element={<Gallery />} />
           <Route path="/artwork/:id" element={<ArtworkDetails />} />
@@ -57,74 +59,94 @@ const AppInner = () => {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* Protected — Visitor */}
+          {/* PROTECTED — GENERAL */}
           <Route path="/wishlist" element={
             <ProtectedRoute roles={["visitor", "admin", "artist", "curator"]}>
               <Wishlist />
             </ProtectedRoute>
           } />
+
           <Route path="/purchases" element={
             <ProtectedRoute roles={["visitor", "admin"]}>
               <Purchases />
             </ProtectedRoute>
           } />
 
-          {/* Protected — Admin */}
+          {/* PROTECTED — ADMIN */}
           <Route path="/admin" element={
             <ProtectedRoute roles={["admin"]}>
               <AdminDashboard />
             </ProtectedRoute>
           } />
 
-          {/* Protected — Artist */}
+          {/* ADD ARTWORK */}
+          <Route path="/add-artwork" element={
+            <ProtectedRoute roles={["admin", "artist"]}>
+              <AddArtwork />
+            </ProtectedRoute>
+          } />
+
+          {/* EDIT ARTWORK */}
+          <Route path="/edit-artwork/:id" element={
+            <ProtectedRoute roles={["admin", "artist"]}>
+              <EditArtwork />
+            </ProtectedRoute>
+          } />
+
+          {/* PROTECTED — ARTIST */}
           <Route path="/artist" element={
             <ProtectedRoute roles={["artist"]}>
               <ArtistDashboard />
             </ProtectedRoute>
           } />
 
-          {/* Protected — Curator */}
+          {/* PROTECTED — CURATOR */}
           <Route path="/curator" element={
             <ProtectedRoute roles={["curator"]}>
               <CuratorDashboard />
             </ProtectedRoute>
           } />
 
-          {/* Protected — Visitor */}
+          {/* PROTECTED — VISITOR */}
           <Route path="/visitor" element={
             <ProtectedRoute roles={["visitor", "admin"]}>
               <VisitorDashboard />
             </ProtectedRoute>
           } />
 
-          {/* 404 */}
+          {/* 404 PAGE */}
           <Route path="*" element={
             <div className="page-wrapper flex-center" style={{ minHeight: "80vh" }}>
               <div className="text-center">
-                <h1 className="gradient-text" style={{ fontSize: "8rem", fontFamily: "Cormorant Garamond, serif" }}>404</h1>
-                <h2 className="font-display mb-2">Page Not Found</h2>
-                <p className="mb-4">The artwork you're looking for doesn't exist in our collection.</p>
-                <a href="/" className="btn btn-primary">Return to Gallery</a>
+                <h1 style={{ fontSize: "8rem" }}>404</h1>
+                <h2>Page Not Found</h2>
+                <p>The artwork you're looking for doesn't exist.</p>
+                <a href="/" className="btn btn-primary">Go Home</a>
               </div>
             </div>
           } />
+
         </Routes>
       </AnimatePresence>
+
       {showFooter && <Footer />}
     </>
   );
 };
 
-// Root App Component
+// ROOT APP
 const App = () => {
-  const [theme, setTheme] = useState(() => localStorage.getItem("gallery_theme") || "dark");
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem("gallery_theme") || "dark"
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("gallery_theme", theme);
   }, [theme]);
 
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const toggleTheme = () =>
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   return (
     <AuthProvider>

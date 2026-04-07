@@ -1364,6 +1364,13 @@
   box-shadow: var(--shadow-lg), var(--shadow-gold);
 }
 
+@media (max-width: 540px) {
+  .auth-card {
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+  }
+}
+
 .auth-header {
   text-align: center;
   margin-bottom: 1.5rem;
@@ -1438,11 +1445,44 @@
   text-align: center;
 }
 
+.demo-accounts p {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+}
+
 .demo-pills {
   display: flex;
   gap: 0.5rem;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.demo-pills button {
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-family: 'Space Grotesk', sans-serif;
+  transition: all var(--transition);
+}
+
+.demo-pills button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-glow);
+}
+
+.demo-pills button.active {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-glow);
+  box-shadow: 0 0 0 2px var(--gold-glow);
 }
 
 /* Role picker (Register) */

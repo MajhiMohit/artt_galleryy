@@ -1,9 +1,10 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactDOM from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Image, Plus, Trash2, Edit3, TrendingUp, Eye, DollarSign, Star, X, Check, Upload, Link, MessageCircle, Send } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ARTWORKS } from "../data/mockData";
+import API from "../services/api";
 
 const SIDEBAR_ITEMS = [
     { key: "overview", label: "Overview", icon: <TrendingUp size={18} /> },
@@ -23,6 +24,129 @@ const INITIAL_FORM = {
     title: "", price: "", category: "Oil Painting", era: "Contemporary",
     medium: "", dimensions: "", description: "", culturalSignificance: "",
     origin: "", tags: "",
+};
+
+const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1579783901586-d88db74b4fe4?w=800&q=80";
+
+const toLowerSafe = (value) => String(value || "").trim().toLowerCase();
+
+const resolveArtworkImage = (artwork) => {
+    const directImage = artwork?.image;
+    const rawImage =
+        (typeof directImage === "string" ? directImage : "") ||
+        artwork?.imageUrl ||
+        artwork?.image_url ||
+        artwork?.thumbnail ||
+        artwork?.thumbnailUrl ||
+        artwork?.secureUrl ||
+        artwork?.secure_url ||
+        artwork?.cloudinaryUrl ||
+        artwork?.cloudinary?.url ||
+        artwork?.cloudinary?.secure_url ||
+        artwork?.image?.url ||
+        artwork?.image?.secure_url ||
+        artwork?.image?.secureUrl ||
+        "";
+
+    if (!rawImage) return FALLBACK_IMAGE;
+    if (/^(https?:|data:|blob:)/i.test(rawImage) || rawImage.startsWith("/")) return rawImage;
+    if (rawImage.startsWith("artworks/")) return `/${rawImage}`;
+    return rawImage;
+};
+
+const normalizeArtwork = (artwork) => {
+    return {
+        ...artwork,
+        image: resolveArtworkImage(artwork),
+        tags: Array.isArray(artwork?.tags)
+            ? artwork.tags
+            : typeof artwork?.tags === "string"
+                ? artwork.tags.split(",").map((t) => t.trim()).filter(Boolean)
+                : [],
+    };
+};
+
+const belongsToCurrentArtist = (artwork, user) => {
+    const identityText = [
+        user?.name,
+        user?.username,
+        user?.fullName,
+        user?.email,
+        user?.email ? String(user.email).split("@")[0] : "",
+    ]
+        .map(toLowerSafe)
+        .filter(Boolean);
+
+    const identityIds = [user?.id, user?.userId].map((v) => String(v || "")).filter(Boolean);
+
+    const artworkText = [
+        artwork?.artist,
+        artwork?.artistName,
+        artwork?.ownerName,
+        artwork?.creatorName,
+        artwork?.createdBy,
+        artwork?.uploadedBy,
+        artwork?.username,
+        artwork?.email,
+        artwork?.ownerEmail,
+    ]
+        .map(toLowerSafe)
+        .filter(Boolean);
+
+    const artworkIds = [
+        artwork?.artistId,
+        artwork?.ownerId,
+        artwork?.userId,
+        artwork?.createdById,
+        artwork?.creatorId,
+    ]
+        .map((v) => String(v || ""))
+        .filter(Boolean);
+
+    const textMatch = artworkText.some((value) => identityText.includes(value));
+    const idMatch = artworkIds.some((value) => identityIds.includes(value));
+    return textMatch || idMatch;
+};
+
+const hasOwnershipMetadata = (artwork) => {
+    const ownerTextFields = [
+        artwork?.artist,
+        artwork?.artistName,
+        artwork?.ownerName,
+        artwork?.creatorName,
+        artwork?.createdBy,
+        artwork?.uploadedBy,
+        artwork?.username,
+        artwork?.email,
+        artwork?.ownerEmail,
+    ];
+
+    const ownerIdFields = [
+        artwork?.artistId,
+        artwork?.ownerId,
+        artwork?.userId,
+        artwork?.createdById,
+        artwork?.creatorId,
+    ];
+
+    const hasTextOwner = ownerTextFields.some((value) => String(value || "").trim().length > 0);
+    const hasIdOwner = ownerIdFields.some((value) => String(value || "").trim().length > 0);
+    return hasTextOwner || hasIdOwner;
+};
+
+const extractApiList = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.content)) return payload.content;
+    return [];
+};
+
+const formatBackendError = (rawMessage) => {
+    const message = String(rawMessage || "");
+    if (message.toLowerCase().includes("unresolved compilation problem")) {
+        return "Backend Java compilation error: Artwork constructor mismatch. Fix the Spring Artwork constructor/entity and restart backend.";
+    }
+    return message;
 };
 
 // ── Buyer Messages Panel ──────────────────────────────────────────────────
@@ -157,20 +281,43 @@ const BuyerMessages = ({ showToast }) => {
 const ArtistDashboard = () => {
     const { user } = useAuth();
     const [active, setActive] = useState("overview");
-    const [artworks, setArtworks] = useState(ARTWORKS.filter((a) => a.artist === user.name));
+    // Start with empty array – only populate after checking ownership
+    const [artworks, setArtworks] = useState([]);
     const [form, setForm] = useState(INITIAL_FORM);
     const [editId, setEditId] = useState(null);
     const [saved, setSaved] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [toast, setToast] = useState(null);
     const [imagePreview, setImagePreview] = useState(null);
+    const [imageFile, setImageFile] = useState(null);
     const [imageUrl, setImageUrl] = useState("");
     const [dragOver, setDragOver] = useState(false);
     const [imageTab, setImageTab] = useState("upload");
+    const [submitFeedback, setSubmitFeedback] = useState(null);
     const fileInputRef = useRef(null);
 
-    const showToast = (msg) => {
-        setToast({ msg });
+    const loadMyArtworks = async () => {
+        try {
+            const res = await API.get("/artworks");
+            const all = extractApiList(res.data).map(normalizeArtwork);
+            // Only show artworks that explicitly belong to this artist
+            const mine = all.filter((a) => belongsToCurrentArtist(a, user));
+            setArtworks(mine);
+        } catch (err) {
+            console.error(err);
+            // Fallback: only show mock artworks belonging to this artist
+            const fallback = ARTWORKS.filter((a) => belongsToCurrentArtist(a, user));
+            setArtworks(fallback);
+        }
+    };
+
+    useEffect(() => {
+        if (!user?.name) return;
+        loadMyArtworks();
+    }, [user?.name]);
+
+    const showToast = (msg, type = "success") => {
+        setToast({ msg, type });
         setTimeout(() => setToast(null), 3000);
     };
 
@@ -178,6 +325,7 @@ const ArtistDashboard = () => {
 
     const handleImageFile = (file) => {
         if (!file || !file.type.startsWith("image/")) return;
+        setImageFile(file);
         const reader = new FileReader();
         reader.onload = (e) => {
             setImagePreview(e.target.result);
@@ -186,45 +334,94 @@ const ArtistDashboard = () => {
         reader.readAsDataURL(file);
     };
 
-    const clearImage = () => { setImagePreview(null); setImageUrl(""); };
+    const clearImage = () => {
+        setImagePreview(null);
+        setImageFile(null);
+        setImageUrl("");
+    };
 
-    const handleSave = (e) => {
+    const handleSave = async (e) => {
         e.preventDefault();
-        if (!form.title || !form.price) return;
+        setSubmitFeedback(null);
 
-        if (editId) {
-            setArtworks((prev) =>
-                prev.map((a) =>
-                    a.id === editId ? { ...a, ...form, price: Number(form.price) } : a
-                )
-            );
-            setEditId(null);
-        } else {
-            const newArtwork = {
-                id: Date.now(),
-                ...form,
-                price: Number(form.price),
-                artist: user.name,
-                artistId: user.id,
-                rating: 0,
-                reviews: 0,
-                featured: false,
-                sold: false,
-                views: 0,
-                image: imagePreview || imageUrl || "https://images.unsplash.com/photo-1579783901586-d88db74b4fe4?w=800&q=80",
-                tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
-                year: new Date().getFullYear(),
-            };
-            setArtworks((prev) => [newArtwork, ...prev]);
+        if (!form.title || !form.price) {
+            setSubmitFeedback({
+                type: "error",
+                message: "Title and Price are required before upload.",
+            });
+            return;
         }
-        setForm(INITIAL_FORM);
-        clearImage();
-        setSaved(true);
-        showToast(editId ? "Artwork updated successfully! ✅" : "Artwork uploaded successfully! 🎉");
-        setTimeout(() => { setSaved(false); setActive("artworks"); }, 1500);
+
+        const current = artworks.find((a) => a.id === editId);
+        const resolvedImageUrl = imageUrl.trim() || current?.image || FALLBACK_IMAGE;
+
+        const formData = new FormData();
+        formData.append("title", form.title.trim());
+        formData.append("artist", user?.name || "Unknown Artist");
+        formData.append("category", form.category);
+        formData.append("era", form.era);
+        formData.append("featured", String(current?.featured ?? false));
+        formData.append("price", String(Number(form.price)));
+        formData.append("rating", String(current?.rating ?? 0));
+        formData.append("year", String(current?.year ?? new Date().getFullYear()));
+
+        if (form.medium?.trim()) formData.append("medium", form.medium.trim());
+        if (form.dimensions?.trim()) formData.append("dimensions", form.dimensions.trim());
+        if (form.description?.trim()) formData.append("description", form.description.trim());
+        if (form.culturalSignificance?.trim()) formData.append("culturalSignificance", form.culturalSignificance.trim());
+        if (form.origin?.trim()) formData.append("origin", form.origin.trim());
+        if (form.tags?.trim()) formData.append("tags", form.tags.trim());
+
+        if (imageFile) {
+            formData.append("image", imageFile);
+        } else if (resolvedImageUrl) {
+            formData.append("imageUrl", resolvedImageUrl);
+        }
+
+        try {
+            if (editId) {
+                await API.put(`/artworks/${editId}`, formData, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
+            } else {
+                await API.post("/artworks", formData, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
+            }
+
+            await loadMyArtworks();
+            setForm(INITIAL_FORM);
+            clearImage();
+            setEditId(null);
+            setSaved(true);
+            setSubmitFeedback({
+                type: "success",
+                message: editId
+                    ? "Artwork updated successfully and saved to backend."
+                    : "Artwork uploaded successfully and sent to backend.",
+            });
+            showToast(
+                editId ? "Artwork updated successfully!" : "Artwork uploaded successfully!",
+                "success"
+            );
+            setTimeout(() => { setSaved(false); setActive("artworks"); }, 1500);
+        } catch (err) {
+            console.error(err);
+            const rawMessage =
+                err?.response?.data?.message ||
+                err?.response?.data ||
+                "Upload failed. Please check backend and required fields.";
+            const message = formatBackendError(rawMessage);
+            setSubmitFeedback({
+                type: "error",
+                message: String(message),
+            });
+            showToast(String(message), "error");
+        }
     };
 
     const startEdit = (artwork) => {
+        setSubmitFeedback(null);
         setForm({
             title: artwork.title,
             price: artwork.price,
@@ -237,13 +434,27 @@ const ArtistDashboard = () => {
             origin: artwork.origin || "",
             tags: (artwork.tags || []).join(", "),
         });
+        setImageUrl(artwork.image || artwork.imageUrl || artwork.image_url || "");
+        setImageFile(null);
+        setImageTab("url");
         setEditId(artwork.id);
         setActive("upload");
     };
 
-    const handleDelete = (id) => {
-        setArtworks((prev) => prev.filter((a) => a.id !== id));
-        setDeleteConfirm(null);
+    const handleDelete = async (id) => {
+        try {
+            await API.delete(`/artworks/${id}`);
+            await loadMyArtworks();
+            setDeleteConfirm(null);
+            showToast("Artwork deleted successfully.", "success");
+        } catch (err) {
+            console.error(err);
+            const message =
+                err?.response?.data?.message ||
+                err?.response?.data ||
+                "Delete failed. Please check backend logs.";
+            showToast(String(message), "error");
+        }
     };
 
     const totalViews = artworks.reduce((sum, a) => sum + (a.views || 0), 0);
@@ -306,7 +517,16 @@ const ArtistDashboard = () => {
                                 <div className="gallery-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
                                     {artworks.slice(0, 4).map((a) => (
                                         <div key={a.id} className="card" style={{ overflow: "hidden" }}>
-                                            <img src={a.image} alt={a.title} style={{ width: "100%", height: "120px", objectFit: "cover" }} />
+                                            <img
+                                                src={a.image || FALLBACK_IMAGE}
+                                                alt={a.title}
+                                                onError={(e) => {
+                                                    if (e.currentTarget.src !== FALLBACK_IMAGE) {
+                                                        e.currentTarget.src = FALLBACK_IMAGE;
+                                                    }
+                                                }}
+                                                style={{ width: "100%", height: "120px", objectFit: "cover" }}
+                                            />
                                             <div style={{ padding: "0.75rem" }}>
                                                 <p className="text-sm" style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</p>
 
@@ -344,7 +564,17 @@ const ArtistDashboard = () => {
                                                 <tr key={a.id}>
                                                     <td>
                                                         <div className="flex gap-1" style={{ alignItems: "center" }}>
-                                                            <img src={a.image} alt={a.title} className="table-avatar" style={{ borderRadius: "4px" }} />
+                                                            <img
+                                                                src={a.image || FALLBACK_IMAGE}
+                                                                alt={a.title}
+                                                                className="table-avatar"
+                                                                onError={(e) => {
+                                                                    if (e.currentTarget.src !== FALLBACK_IMAGE) {
+                                                                        e.currentTarget.src = FALLBACK_IMAGE;
+                                                                    }
+                                                                }}
+                                                                style={{ borderRadius: "4px" }}
+                                                            />
                                                             <span>{a.title}</span>
                                                         </div>
                                                     </td>
@@ -479,7 +709,11 @@ const ArtistDashboard = () => {
                                                     className="input-field"
                                                     placeholder="https://example.com/artwork.jpg"
                                                     value={imageUrl}
-                                                    onChange={(e) => { setImageUrl(e.target.value); setImagePreview(null); }}
+                                                    onChange={(e) => {
+                                                        setImageUrl(e.target.value);
+                                                        setImagePreview(null);
+                                                        setImageFile(null);
+                                                    }}
                                                 />
                                                 {imageUrl && (
                                                     <div style={{ marginTop: "0.75rem", borderRadius: "10px", overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -501,6 +735,20 @@ const ArtistDashboard = () => {
                                         <div className="form-group">
                                             <label className="input-label">Title *</label>
                                             <input className="input-field" placeholder="Artwork title" value={form.title} onChange={update("title")} required />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label className="input-label">Price (INR) *</label>
+                                            <input
+                                                className="input-field"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                placeholder="e.g. 25000"
+                                                value={form.price}
+                                                onChange={update("price")}
+                                                required
+                                            />
                                         </div>
 
                                         <div className="form-group">
@@ -544,8 +792,37 @@ const ArtistDashboard = () => {
                                         <button type="submit" className="btn btn-primary">
                                             {saved ? <><Check size={16} /> Saved!</> : <>{editId ? "Update Artwork" : "Upload Artwork"}</>}
                                         </button>
-                                        <button type="button" className="btn btn-ghost" onClick={() => { setForm(INITIAL_FORM); setEditId(null); clearImage(); setActive("artworks"); }}>Cancel</button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost"
+                                            onClick={() => {
+                                                setForm(INITIAL_FORM);
+                                                setEditId(null);
+                                                clearImage();
+                                                setSubmitFeedback(null);
+                                                setActive("artworks");
+                                            }}
+                                        >
+                                            Cancel
+                                        </button>
                                     </div>
+
+                                    {submitFeedback && (
+                                        <div
+                                            style={{
+                                                marginTop: "0.9rem",
+                                                borderRadius: "10px",
+                                                padding: "0.7rem 0.9rem",
+                                                border: `1px solid ${submitFeedback.type === "success" ? "#3c89af" : "rgba(239,68,68,0.45)"}`,
+                                                background: submitFeedback.type === "success" ? "#c8e0ee" : "rgba(239,68,68,0.12)",
+                                                color: submitFeedback.type === "success" ? "#06283a" : "#7f1d1d",
+                                                fontSize: "0.88rem",
+                                                fontWeight: submitFeedback.type === "success" ? 800 : 600,
+                                            }}
+                                        >
+                                            {submitFeedback.message}
+                                        </div>
+                                    )}
                                 </form>
                             </div>
                         </div>
@@ -632,31 +909,50 @@ const ArtistDashboard = () => {
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "0.75rem",
-                                background: "linear-gradient(135deg, #101820 0%, #0d1f2d 100%)",
-                                border: "1.5px solid var(--gold)",
+                                background: toast.type === "error"
+                                    ? "linear-gradient(135deg, #2b0f15 0%, #3a121a 100%)"
+                                    : "linear-gradient(135deg, #d7e9f5 0%, #bed9ea 100%)",
+                                border: toast.type === "error"
+                                    ? "1.5px solid rgba(239,68,68,0.7)"
+                                    : "1.5px solid #3c89af",
                                 borderRadius: "14px",
                                 padding: "1rem 1.4rem",
                                 minWidth: "300px",
-                                boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(45,141,175,0.2)",
-                                color: "#fff",
+                                boxShadow: toast.type === "error"
+                                    ? "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(239,68,68,0.25)"
+                                    : "0 8px 30px rgba(18,54,77,0.22), 0 0 0 1px rgba(60,137,175,0.25)",
+                                color: toast.type === "error" ? "#fff" : "#0b2b3d",
                                 overflow: "hidden",
                             }}
                         >
                             {/* Icon circle */}
                             <div style={{
                                 width: 42, height: 42, borderRadius: "50%",
-                                background: "rgba(45,141,175,0.18)",
+                                background: toast.type === "error" ? "rgba(239,68,68,0.18)" : "rgba(17,91,126,0.16)",
                                 display: "flex", alignItems: "center", justifyContent: "center",
                                 fontSize: "1.4rem", flexShrink: 0,
-                                border: "1px solid rgba(45,141,175,0.3)"
+                                border: toast.type === "error" ? "1px solid rgba(239,68,68,0.32)" : "1px solid rgba(17,91,126,0.35)"
                             }}>
-                                🎉
+                                {toast.type === "error" ? "⚠️" : "🎉"}
                             </div>
                             <div style={{ flex: 1 }}>
-                                <p style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.2rem", color: "var(--gold-light)" }}>
-                                    Success!
+                                <p style={{
+                                    fontWeight: 900,
+                                    fontSize: "1rem",
+                                    marginBottom: "0.2rem",
+                                    letterSpacing: "0.01em",
+                                    color: toast.type === "error" ? "#fecaca" : "#083349",
+                                }}>
+                                    {toast.type === "error" ? "Error" : "Success"}
                                 </p>
-                                <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", margin: 0 }}>
+                                <p
+                                    style={{
+                                        fontSize: "0.84rem",
+                                        color: toast.type === "error" ? "#f3f4f6" : "#0d3b54",
+                                        margin: 0,
+                                        fontWeight: toast.type === "success" ? 700 : 500,
+                                    }}
+                                >
                                     {toast.msg}
                                 </p>
                             </div>
@@ -682,7 +978,7 @@ const ArtistDashboard = () => {
                                     bottom: 0, left: 0,
                                     height: "3px",
                                     width: "100%",
-                                    background: "var(--gold)",
+                                    background: toast.type === "error" ? "#ef4444" : "#2f7fa6",
                                     transformOrigin: "left",
                                 }}
                             />

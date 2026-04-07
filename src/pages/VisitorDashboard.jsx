@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -6,7 +6,46 @@ import {
     Eye, Star, TrendingUp, ExternalLink, Play, Map
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import API from "../services/api";
 import { ARTWORKS, EXHIBITIONS } from "../data/mockData";
+
+const FALLBACK_IMAGE = "/artworks/art_mind_mosaic.png";
+
+const normalizeArtwork = (artwork) => {
+    const directImage = artwork?.image;
+    const rawImage =
+        (typeof directImage === "string" ? directImage : "") ||
+        artwork?.imageUrl ||
+        artwork?.image_url ||
+        artwork?.thumbnail ||
+        artwork?.thumbnailUrl ||
+        artwork?.secureUrl ||
+        artwork?.secure_url ||
+        artwork?.cloudinaryUrl ||
+        artwork?.cloudinary?.url ||
+        artwork?.cloudinary?.secure_url ||
+        artwork?.image?.url ||
+        artwork?.image?.secure_url ||
+        artwork?.image?.secureUrl ||
+        "";
+
+    let normalizedImage = FALLBACK_IMAGE;
+
+    if (rawImage) {
+        if (/^(https?:|data:|blob:)/i.test(rawImage) || rawImage.startsWith("/")) {
+            normalizedImage = rawImage;
+        } else if (rawImage.startsWith("artworks/")) {
+            normalizedImage = `/${rawImage}`;
+        } else {
+            normalizedImage = `/artworks/${rawImage}`;
+        }
+    }
+
+    return {
+        ...artwork,
+        image: normalizedImage,
+    };
+};
 
 const SIDEBAR_ITEMS = [
     { key: "overview", label: "My Dashboard", icon: <LayoutDashboard size={18} /> },
@@ -19,11 +58,30 @@ const SIDEBAR_ITEMS = [
 const VisitorDashboard = () => {
     const { user, purchases, wishlist, isWishlisted } = useAuth();
     const [active, setActive] = useState("overview");
+    const [artworks, setArtworks] = useState(ARTWORKS.map(normalizeArtwork));
     const navigate = useNavigate();
 
-    const wishlisted = ARTWORKS.filter((a) => wishlist.includes(a.id));
-    const availableArtworks = ARTWORKS.filter((a) => !a.sold);
-    const featuredArtworks = ARTWORKS.filter((a) => a.featured);
+    useEffect(() => {
+        API.get("/artworks")
+            .then((res) => {
+                const apiArtworks = Array.isArray(res.data)
+                    ? res.data
+                    : Array.isArray(res.data?.data)
+                    ? res.data.data
+                    : [];
+
+                const source = apiArtworks.length > 0 ? apiArtworks : ARTWORKS;
+                setArtworks(source.map(normalizeArtwork));
+            })
+            .catch((err) => {
+                console.error(err);
+                setArtworks(ARTWORKS.map(normalizeArtwork));
+            });
+    }, []);
+
+    const wishlisted = artworks.filter((a) => wishlist.includes(a.id));
+    const availableArtworks = artworks.filter((a) => !a.sold);
+    const featuredArtworks = artworks.filter((a) => a.featured);
 
     return (
         <div className="page-wrapper dashboard-layout">
@@ -105,7 +163,7 @@ const VisitorDashboard = () => {
                                                 <p className="text-xs text-muted">{a.artist}</p>
                                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem" }}>
                                                     <span style={{ color: "var(--gold)", fontSize: "0.8rem", fontWeight: 700 }}>${a.price}</span>
-                                                    <Link to={`/artwork/${a.id}`} className="btn btn-ghost btn-sm" style={{ padding: "0.2rem 0.5rem" }}>
+                                                    <Link to={`/artwork/${a.id}`} state={{ artwork: a }} className="btn btn-ghost btn-sm" style={{ padding: "0.2rem 0.5rem" }}>
                                                         <ExternalLink size={12} />
                                                     </Link>
                                                 </div>
@@ -150,9 +208,9 @@ const VisitorDashboard = () => {
                             {/* Summary Row */}
                             <div className="grid-3 mb-4">
                                 {[
-                                    { label: "Total Artworks", value: ARTWORKS.length },
+                                    { label: "Total Artworks", value: artworks.length },
                                     { label: "Available to Buy", value: availableArtworks.length },
-                                    { label: "Sold", value: ARTWORKS.filter(a => a.sold).length },
+                                    { label: "Sold", value: artworks.filter((a) => a.sold).length },
                                 ].map((s) => (
                                     <div key={s.label} className="stat-card-dashboard glass-card">
                                         <div className="stat-dash-value">{s.value}</div>
@@ -175,7 +233,7 @@ const VisitorDashboard = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {ARTWORKS.map((a) => (
+                                        {artworks.map((a) => (
                                             <tr key={a.id}>
                                                 <td>
                                                     <div className="flex gap-1" style={{ alignItems: "center" }}>
@@ -198,7 +256,7 @@ const VisitorDashboard = () => {
                                                     </span>
                                                 </td>
                                                 <td>
-                                                    <Link to={`/artwork/${a.id}`} className="btn btn-ghost btn-sm btn-icon">
+                                                    <Link to={`/artwork/${a.id}`} state={{ artwork: a }} className="btn btn-ghost btn-sm btn-icon">
                                                         <ExternalLink size={14} />
                                                     </Link>
                                                 </td>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
     LayoutDashboard, Users, Image, Settings, BarChart3,
@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ARTWORKS, USERS, EXHIBITIONS } from "../data/mockData";
+import API from "../services/api";
 
 const SIDEBAR_ITEMS = [
     { key: "overview", label: "Overview", icon: <LayoutDashboard size={18} /> },
@@ -15,20 +16,139 @@ const SIDEBAR_ITEMS = [
     { key: "settings", label: "Gallery Settings", icon: <Settings size={18} /> },
 ];
 
-const STATS = [
-    { label: "Total Artworks", value: ARTWORKS.length, icon: <Image size={22} />, color: "var(--gold)" },
-    { label: "Registered Users", value: USERS.length, icon: <Users size={22} />, color: "var(--accent-teal)" },
-    { label: "Active Exhibitions", value: EXHIBITIONS.length, icon: <BarChart3 size={22} />, color: "var(--accent-purple)" },
-    { label: "Total Sales", value: ARTWORKS.filter((a) => a.sold).length, icon: <ShoppingBag size={22} />, color: "var(--accent-red)" },
-];
+const extractApiList = (payload) => {
+    const directCandidates = [
+        payload,
+        payload?.data,
+        payload?.data?.data,
+        payload?.data?.content,
+        payload?.data?.users,
+        payload?.data?.result,
+        payload?.data?.items,
+        payload?.data?.records,
+        payload?.content,
+        payload?.users,
+        payload?.result,
+        payload?.items,
+        payload?.records,
+        payload?.user,
+        payload?.data?.user,
+    ];
+
+    for (const candidate of directCandidates) {
+        if (Array.isArray(candidate)) return candidate;
+        if (candidate && typeof candidate === "object") return [candidate];
+    }
+
+    const queue = [payload];
+    const seen = new Set();
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current || typeof current !== "object") continue;
+        if (seen.has(current)) continue;
+        seen.add(current);
+
+        for (const value of Object.values(current)) {
+            if (Array.isArray(value) && value.length > 0) {
+                const first = value[0];
+                if (first && typeof first === "object") {
+                    return value;
+                }
+            }
+
+            if (value && typeof value === "object") {
+                queue.push(value);
+            }
+        }
+    }
+
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.data?.data)) return payload.data.data;
+    if (Array.isArray(payload?.data?.content)) return payload.data.content;
+    if (Array.isArray(payload?.data?.users)) return payload.data.users;
+    if (Array.isArray(payload?.data?.result)) return payload.data.result;
+    if (Array.isArray(payload?.content)) return payload.content;
+    if (Array.isArray(payload?.users)) return payload.users;
+    if (Array.isArray(payload?.result)) return payload.result;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.records)) return payload.records;
+    return [];
+};
+
+const normalizeUser = (rawUser) => {
+    const roleRaw = rawUser?.role || rawUser?.userRole || rawUser?.authority || "VISITOR";
+    const role = String(roleRaw)
+        .toUpperCase()
+        .replace("ROLE_", "");
+    const name =
+        rawUser?.name ||
+        rawUser?.fullName ||
+        rawUser?.username ||
+        (rawUser?.email ? String(rawUser.email).split("@")[0] : "User");
+
+    return {
+        id: rawUser?.id ?? rawUser?.userId ?? rawUser?.email ?? name,
+        name,
+        email: rawUser?.email || "-",
+        role: ["ADMIN", "ARTIST", "CURATOR", "VISITOR"].includes(role) ? role : "VISITOR",
+        avatar: rawUser?.avatar || `https://i.pravatar.cc/150?u=${encodeURIComponent(rawUser?.email || name)}`,
+    };
+};
 
 const AdminDashboard = () => {
     const { user } = useAuth();
     const [active, setActive] = useState("overview");
+    const [users, setUsers] = useState(USERS);
+    const [usersLoading, setUsersLoading] = useState(true);
+    const [usersError, setUsersError] = useState("");
     const [roleMap, setRoleMap] = useState(
-        Object.fromEntries(USERS.map((u) => [u.id, u.role]))
+        Object.fromEntries(USERS.map((u) => [u.id, String(u.role || "VISITOR").toUpperCase()]))
     );
     const [toast, setToast] = useState(null);
+
+    useEffect(() => {
+        const fetchUsers = async () => {
+            setUsersLoading(true);
+            setUsersError("");
+
+            try {
+                const res = await API.get("/users");
+
+                const parsed = extractApiList(res.data).map(normalizeUser);
+
+                console.log("API USERS:", parsed);
+
+                if (parsed.length > 0) {
+                    setUsers(parsed);
+                    setRoleMap(Object.fromEntries(parsed.map((u) => [u.id, u.role])));
+                } else {
+                    setUsers([]);
+                    setRoleMap({});
+                    setUsersError("No users returned by backend.");
+                }
+            } catch (err) {
+                console.error(err);
+                setUsers([]);
+                setRoleMap({});
+                const status = err?.response?.status;
+                const serverMessage =
+                    err?.response?.data?.message ||
+                    err?.response?.data?.error ||
+                    (typeof err?.response?.data === "string" ? err.response.data : "");
+                setUsersError(
+                    serverMessage
+                        ? `Failed to fetch users (${status || "error"}): ${serverMessage}`
+                        : `Failed to fetch users from backend${status ? ` (status ${status})` : ""}.`
+                );
+            } finally {
+                setUsersLoading(false);
+            }
+        };
+
+        fetchUsers();
+    }, []);
 
     const showToast = (msg) => {
         setToast(msg);
@@ -42,6 +162,14 @@ const AdminDashboard = () => {
     const saveRoles = () => {
         showToast("User roles updated successfully! ✅");
     };
+
+    const stats = [
+        { label: "Total Artworks", value: ARTWORKS.length, icon: <Image size={22} />, color: "var(--gold)" },
+        { label: "Registered Users", value: users.length, icon: <Users size={22} />, color: "var(--accent-teal)" },
+        { label: "Active Exhibitions", value: EXHIBITIONS.length, icon: <BarChart3 size={22} />, color: "var(--accent-purple)" },
+        { label: "Total Sales", value: ARTWORKS.filter((a) => a.sold).length, icon: <ShoppingBag size={22} />, color: "var(--accent-red)" },
+    ];
+
     return (
         <div className="page-wrapper dashboard-layout">
             {/* Sidebar */}
@@ -84,7 +212,7 @@ const AdminDashboard = () => {
 
                             {/* Stat Cards */}
                             <div className="grid-4 mb-4">
-                                {STATS.map((s, i) => (
+                                {stats.map((s, i) => (
                                     <motion.div
                                         key={s.label}
                                         className="stat-card-dashboard glass-card"
@@ -148,16 +276,27 @@ const AdminDashboard = () => {
                             <div className="dashboard-header">
                                 <div>
                                     <h2 className="font-display">User Role Management</h2>
-                                    <p className="text-muted text-sm">Assign and modify user roles across the platform</p>
+                                    <p className="text-muted text-sm">View all registered website users and manage roles</p>
                                 </div>
                                 <button className="btn btn-primary btn-sm" onClick={saveRoles}>
                                     <CheckCircle2 size={15} /> Save Changes
                                 </button>
                             </div>
+                            {usersLoading && (
+                                <p className="text-muted text-sm" style={{ marginBottom: "0.75rem" }}>
+                                    Loading users from backend...
+                                </p>
+                            )}
+                            {usersError && (
+                                <p className="text-sm" style={{ color: "#ef4444", marginBottom: "0.75rem" }}>
+                                    {usersError}
+                                </p>
+                            )}
                             <div className="glass-card" style={{ overflow: "auto" }}>
                                 <table className="data-table">
                                     <thead>
                                         <tr>
+                                            <th>ID</th>
                                             <th>User</th>
                                             <th>Email</th>
                                             <th>Current Role</th>
@@ -166,8 +305,9 @@ const AdminDashboard = () => {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {USERS.map((u) => (
+                                        {users.map((u) => (
                                             <tr key={u.id}>
+                                                <td>{u.id}</td>
                                                 <td>
                                                     <div className="flex gap-1" style={{ alignItems: "center" }}>
                                                         <img src={u.avatar} alt={u.name} className="table-avatar" style={{ borderRadius: "50%" }} />
@@ -176,18 +316,18 @@ const AdminDashboard = () => {
                                                 </td>
                                                 <td>{u.email}</td>
                                                 <td>
-                                                    <span className={`badge badge-${roleMap[u.id] === "admin" ? "red" : roleMap[u.id] === "artist" ? "purple" : roleMap[u.id] === "curator" ? "green" : "gold"}`}>
-                                                        {roleMap[u.id]}
+                                                    <span className={`badge badge-${roleMap[u.id] === "ADMIN" ? "red" : roleMap[u.id] === "ARTIST" ? "purple" : roleMap[u.id] === "CURATOR" ? "green" : "gold"}`}>
+                                                        {String(roleMap[u.id] || "VISITOR").toLowerCase()}
                                                     </span>
                                                 </td>
                                                 <td>
                                                     <select
                                                         className="input-field"
                                                         style={{ padding: "0.3rem 0.6rem", fontSize: "0.8rem", width: "auto" }}
-                                                        value={roleMap[u.id]}
+                                                        value={roleMap[u.id] || "VISITOR"}
                                                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
                                                     >
-                                                        {["admin", "artist", "curator", "visitor"].map((r) => (
+                                                        {["ADMIN", "ARTIST", "CURATOR", "VISITOR"].map((r) => (
                                                             <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
                                                         ))}
                                                     </select>

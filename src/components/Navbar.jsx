@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -20,11 +20,34 @@ const Navbar = ({ theme, toggleTheme }) => {
     const [scrolled, setScrolled] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
     const [dropdownOpen, setDropdownOpen] = useState(false);
+    const dropdownRef = useRef(null);
 
     useEffect(() => {
         const onScroll = () => setScrolled(window.scrollY > 20);
         window.addEventListener("scroll", onScroll);
         return () => window.removeEventListener("scroll", onScroll);
+    }, []);
+
+    useEffect(() => {
+        const onPointerDown = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setDropdownOpen(false);
+            }
+        };
+
+        const onKeyDown = (event) => {
+            if (event.key === "Escape") {
+                setDropdownOpen(false);
+            }
+        };
+
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
     }, []);
 
     const handleLogout = () => {
@@ -86,11 +109,14 @@ const Navbar = ({ theme, toggleTheme }) => {
                             </Link>
 
                             {/* User Dropdown */}
-                            <div className="user-dropdown" onMouseLeave={() => setDropdownOpen(false)}>
+                            <div className="user-dropdown" ref={dropdownRef}>
                                 <button
                                     className="user-trigger"
-                                    onMouseEnter={() => setDropdownOpen(true)}
-                                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                                    onClick={() => setDropdownOpen(true)}
+                                    onDoubleClick={() => setDropdownOpen(true)}
+                                    aria-expanded={dropdownOpen}
+                                    aria-haspopup="menu"
+                                    title="Double-click to open profile menu"
                                 >
                                     <div className="user-avatar-placeholder"><User size={18} /></div>
                                     <span className="user-name hide-mobile">{user.name.split(" ")[0]}</span>
